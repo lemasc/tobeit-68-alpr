@@ -4,10 +4,11 @@ from ultralytics import YOLO
 import easyocr
 from deep_sort_realtime.deepsort_tracker import DeepSort
 import datetime
+from collections import OrderedDict
  
-cap = cv2.VideoCapture('video.mp4')
+cap = cv2.VideoCapture(r'D:\Coding\train-poon-poon\tobeit-68-alpr\video.mp4')
 
-model = YOLO('license-plate-final-best.pt')
+model = YOLO(r'D:\Coding\train-poon-poon\tobeit-68-alpr\license-plate-final-best.pt')
 tracker = DeepSort(max_age=50)
 reader = easyocr.Reader(['th','en'])
 
@@ -16,6 +17,34 @@ fps = cap.get(cv2.CAP_PROP_FPS)
 CONFIDENCE_THRESHOLD = 0.8
 GREEN = (0, 255, 0)
 WHITE = (255, 255, 255)
+
+ocr_results = OrderedDict()
+
+def run_ocr(plate, trackId):
+    if ocr_results.get(trackId):
+        ocr_results.move_to_end(trackId, last=False)
+        return ocr_results[trackId]
+    try:
+        crop_gray = cv2.cvtColor(plate, cv2.COLOR_BGR2GRAY)
+        # _, crop_thresh = cv2.threshold(crop_gray, 64, 255, cv2.THRESH_BINARY_INV)
+        cv2.imshow('plate', crop_gray)
+        results = reader.readtext(crop_gray)
+        final_text = []
+        for result in results:
+            _, text, score = result
+            if float(score) > 0.5:
+                final_text.append(text)
+        
+        final_text = " ".join(final_text)
+        if len(final_text) > 1:
+            if len(ocr_results) > 20:
+                ocr_results.popitem(last=False)
+            ocr_results[trackId] = final_text
+            return final_text
+        
+        return None
+    except Exception as e:
+        return None
 
 
 def process_frame():
@@ -33,8 +62,6 @@ def process_frame():
     
     # initialize the list of bounding boxes and confidences
     results = []
-
-    ocr_results = {}
 
     for d in detections:
         # print("-----------------")
@@ -78,13 +105,23 @@ def process_frame():
         track_id = track.track_id
         ltrb = track.to_ltrb()
 
-        xmin, ymin, xmax, ymax = int(ltrb[0]), int(
-            ltrb[1]), int(ltrb[2]), int(ltrb[3])
+        xmin, ymin, xmax, ymax = [int(x) for x in ltrb]
+
+        plate = frame[ymin:ymax, xmin:xmax, :]
+        if plate.size < 1:
+            continue
+
         # draw the bounding box and the track id
         cv2.rectangle(frame, (xmin, ymin), (xmax, ymax), GREEN, 2)
         cv2.rectangle(frame, (xmin, ymin - 20), (xmin + 20, ymin), GREEN, -1)
         cv2.putText(frame, str(track_id), (xmin + 5, ymin - 8),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.5, WHITE, 1)
+        
+        text = run_ocr(plate, track_id)
+        # print(text)
+        # if text:
+        #     cv2.putText(frame, text[0], (xmin, ymin - 40),
+        #                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, GREEN, 1)
         
     # end time to compute the fps
     end = datetime.datetime.now()
